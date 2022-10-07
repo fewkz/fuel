@@ -17,12 +17,15 @@ type Thing<Props> = { update: OnUpdate<Props>, destroy: () -> () }
 -- See https://github.com/Roblox/luau/pull/86
 type Element = { constructor: Constructor<any>, props: any, children: { Element } }
 
--- RenderedElements represent a tree of things and what they were rendered from.
-type RenderedElement = {
+-- A Thingy is a thing but it also stores the props and children that was used to create that thing.
+-- The  props and children used to create the thing is important so that we can check if any of the
+-- configuration changed to determine whether the thing should be updated.
+-- I need a better name for this, or I could just store the props and children in Thing itself.
+type Thingy = {
 	constructor: Constructor<any>,
 	props: any,
 	thing: Thing<any>,
-	children: { RenderedElement },
+	children: { Thingy },
 	getContext: GetContext,
 }
 
@@ -57,82 +60,87 @@ end
 
 type ContextStackEntry<T> = { context: Context<T>, value: T }
 type ContextStack = { ContextStackEntry<any> }
--- Render takes an existing handle and matches it to the desired state passed in as an element.
--- It returns a handle that represents all of the objects that were created that represent the element.
--- Render transforms an existing handle into a whole new tree of elements.
--- IDEA: we should change existing to an array of RenderedElements. Because the case where existing is nil only happens once.
--- It doesn't make sense for us to have a special case for something that only happens once.
-local function render(existing: RenderedElement?, element: Element, parentGetContext: GetContext): RenderedElement
+
+-- Destroys the children of a thingy and the thingy itself recursively.
+local function destroyRecursive(thingy: Thingy)
+	for _, child in thingy.children do
+		destroyRecursive(child) -- luau errors on this line for some reason
+	end
+	thingy.thing.destroy()
+end
+
+-- Apply takes an array of thingies and an array of elements and mutates the thingies to match the array of elements.
+local function apply(thingies: { Thingy }, elements: { Element }, parentGetContext: GetContext)
 	local getContext: GetContext
-	local children = {}
-	local handle
-	-- If there's an existing handle, based on whether an existing handle was
-	-- passed in, and the element's constructor did not change, we will just update the
-	-- existing handle.
-	if existing and existing.constructor == element.constructor then
-		if existing.props ~= element.props then
-			existing.thing.update(element.props)
+	-- Remove thingies that no longer exist.
+	for i, thingy in thingies do
+		if not elements[i] then
+			destroyRecursive(thingy)
+			thingies[i] = nil
 		end
-		getContext = existing.getContext
-		existing.children = children
-		handle = existing
-	-- If the element didn't exist, or has a different constructor, we will destroy the
-	-- old handle and create a new one.
-	else
+	end
+
+	-- Creates new thingies or updates existing thingies.
+	for i, element in elements do
+		local existing: Thingy? = thingies[i]
+		local thingy: Thingy
 		if existing then
-			existing.thing.destroy()
+			thingy = existing
 		end
-		local localContext: any = {}
-		getContext = function(context)
-			if localContext[context] then
-				return localContext[context]
+		if existing and existing.constructor == element.constructor and existing.props ~= element.props then
+			existing.thing.update(element.props)
+			existing.props = element.props
+			getContext = existing.getContext
+		end
+		if not existing or existing.constructor ~= element.constructor then
+			if existing then
+				existing.thing.destroy()
+			end
+			local localContext: any = {}
+			getContext = function(context)
+				if localContext[context] then
+					return localContext[context]
+				else
+					return parentGetContext(context)
+				end
+			end
+			local setContext: SetContext = function(context, value)
+				localContext[context] = value
+			end
+			local thing = constructThing(element.constructor, element.props, getContext, setContext)
+			if existing then
+				thingy.thing = thing
 			else
-				return parentGetContext(context)
+				thingy = {
+					constructor = element.constructor,
+					props = element.props,
+					thing = thing,
+					children = {},
+					getContext = getContext,
+				}
 			end
 		end
-		local setContext: SetContext = function(context, value)
-			localContext[context] = value
-		end
-		local thing = constructThing(element.constructor, element.props, getContext, setContext)
-		handle = {
-			constructor = element.constructor,
-			props = element.props,
-			thing = thing,
-			children = children,
-			getContext = getContext,
-		}
+		apply(thingy.children, element.children, getContext)
+		thingies[i] = thingy
 	end
-	-- Remove children that no longer exist
-	if existing then
-		for i, child in existing.children do
-			if not element.children[i] then
-				child.thing.destroy()
-				existing.children[i] = nil
-			end
-		end
-	end
-	-- Update children
-	for i, child in element.children do
-		children[i] = render(if existing then existing.children[i] else nil, child, getContext)
-	end
-	return handle
+end
+
+local function defaultGetContext(context)
+	return context.default
 end
 
 local FuelCore = {}
 
-function FuelCore.mount(element: Element)
-	return render(nil, element, function(context)
-		return context.default
-	end)
+function FuelCore.handle()
+	local thingies = {}
+	return {
+		apply = function(elements: { Element })
+			apply(thingies, elements, defaultGetContext)
+		end,
+	}
 end
 
-function FuelCore.update(existing: RenderedElement, element: Element)
-	return render(existing, element, function(context)
-		return context.default
-	end)
-end
-
-function FuelCore.component<T>(constructor: Constructor<T>): (T, children: { Element }) -> Element
+function FuelCore.thing<T>(constructor: Constructor<T>): (T, children: { Element }) -> Element
 	return function(props, children)
 		return { props = props, children = children, constructor = constructor }
 	end
