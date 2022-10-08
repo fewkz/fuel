@@ -1,4 +1,8 @@
 --!strict
+-- Note A. For Element and Thing, we should give them a generic Props type,
+-- and replace `props: any` with `props: Props`, and have their children be Element<any>.
+-- This is blocked until Luau adds support for recursive types of different generics.
+-- See https://github.com/Roblox/luau/pull/86
 
 type Context<T> = { default: T }
 type GetContext = <T>(context: Context<T>) -> T
@@ -9,35 +13,35 @@ type OnUpdate<Props> = ((new: Props, old: Props?) -> Cleanup) -> ()
 -- Constructor is the function used to create a thing. This acts as the classes/types in fuel.
 type Constructor<Props> = (onUpdate: OnUpdate<Props>, getContext: GetContext, setContext: SetContext) -> Cleanup
 
--- A thing represents an object that can be created, updated, and destroyed.
-type Thing<Props> = { update: (new: Props, old: Props?) -> (), destroy: () -> () }
-
 -- Element represents the desired state of a thing at any given point in time.
--- We should replace `props: any` with `props: T` when Luau adds support for recursive types of different generics.
--- See https://github.com/Roblox/luau/pull/86
+-- See Note A
 type Element = { constructor: Constructor<any>, props: any, children: { Element } }
 
 -- CreateElement is a function that takes props and children and returns an element.
 type CreateElement<Props> = (Props, children: { Element }?) -> Element
 
--- A Thingy is a thing but it also stores the props and children that was used to create that thing.
--- The  props and children used to create the thing is important so that we can check if any of the
+type ThingOperations<Props> = { update: (new: Props, old: Props?) -> (), destroy: () -> () }
+
+-- A thing represents an object that can be created, updated, and destroyed.
+-- Things store the props and children that were used to create the thing.
+-- The props and children used to create the thing is important so that we can check if any of the
 -- configuration changed to determine whether the thing should be updated.
 -- I need a better name for this, or I could just store the props and children in Thing itself.
-type Thingy = {
+-- See Note A
+type Thing = {
 	constructor: Constructor<any>,
 	props: any,
-	thing: Thing<any>,
-	children: { Thingy },
+	children: { Thing },
+	operations: ThingOperations<any>,
 	getContext: GetContext,
 }
 
-local function constructThing<T>(
+local function constructThingOperations<T>(
 	constructor: Constructor<T>,
 	props: T,
 	getContext: GetContext,
 	setContext: SetContext
-): Thing<T>
+): ThingOperations<T>
 	local update, cleanupLastUpdate = nil, nil
 	local onUpdate: OnUpdate<any> = function(callback)
 		assert(update == nil, "onUpdate can only be called once!")
@@ -64,40 +68,40 @@ end
 type ContextStackEntry<T> = { context: Context<T>, value: T }
 type ContextStack = { ContextStackEntry<any> }
 
--- Destroys the children of a thingy and the thingy itself recursively.
-local function destroyRecursive(thingy: Thingy)
-	for _, child in thingy.children do
+-- Destroys the children of a thing and the thing itself recursively.
+local function destroyRecursive(thing: Thing)
+	for _, child in thing.children do
 		destroyRecursive(child) -- luau errors on this line for some reason
 	end
-	thingy.thing.destroy()
+	thing.operations.destroy()
 end
 
--- Apply takes an array of thingies and an array of elements and mutates the thingies to match the array of elements.
-local function apply(thingies: { Thingy }, elements: { Element }, parentGetContext: GetContext)
+-- Apply takes an array of things and an array of elements and mutates the things to match the array of elements.
+local function apply(things: { Thing }, elements: { Element }, parentGetContext: GetContext)
 	local getContext: GetContext
-	-- Remove thingies that no longer exist.
-	for i, thingy in thingies do
+	-- Remove things that no longer exist.
+	for i, thing in things do
 		if not elements[i] then
-			destroyRecursive(thingy)
-			thingies[i] = nil
+			destroyRecursive(thing)
+			things[i] = nil
 		end
 	end
 
-	-- Creates new thingies or updates existing thingies.
+	-- Creates new things or updates existing things.
 	for i, element in elements do
-		local existing: Thingy? = thingies[i]
-		local thingy: Thingy
+		local existing: Thing? = things[i]
+		local thing: Thing
 		if existing then
-			thingy = existing
+			thing = existing
 		end
 		if existing and existing.constructor == element.constructor and existing.props ~= element.props then
-			existing.thing.update(element.props, existing.props)
+			existing.operations.update(element.props, existing.props)
 			existing.props = element.props
 			getContext = existing.getContext
 		end
 		if not existing or existing.constructor ~= element.constructor then
 			if existing then
-				existing.thing.destroy()
+				existing.operations.destroy()
 			end
 			local localContext: any = {}
 			getContext = function(context)
@@ -110,21 +114,21 @@ local function apply(thingies: { Thingy }, elements: { Element }, parentGetConte
 			local setContext: SetContext = function(context, value)
 				localContext[context] = value
 			end
-			local thing = constructThing(element.constructor, element.props, getContext, setContext)
+			local operations = constructThingOperations(element.constructor, element.props, getContext, setContext)
 			if existing then
-				thingy.thing = thing
+				thing.operations = operations
 			else
-				thingy = {
+				thing = {
 					constructor = element.constructor,
 					props = element.props,
-					thing = thing,
 					children = {},
+					operations = operations,
 					getContext = getContext,
 				}
 			end
 		end
-		apply(thingy.children, element.children, getContext)
-		thingies[i] = thingy
+		apply(thing.children, element.children, getContext)
+		things[i] = thing
 	end
 end
 
@@ -135,10 +139,10 @@ end
 local FuelCore = {}
 
 function FuelCore.handle()
-	local thingies = {}
+	local things = {}
 	return {
 		apply = function(elements: { Element })
-			apply(thingies, elements, defaultGetContext)
+			apply(things, elements, defaultGetContext)
 		end,
 	}
 end
@@ -229,7 +233,7 @@ type Hooks = typeof(makeHooks({ value = 0 }, function() end))
 
 function FuelCore.statefulElements<Props>(callback: (hooks: Hooks, props: Props) -> { Element })
 	return FuelCore.thing(function(onUpdate, getContext, setContext)
-		local thingies = {}
+		local things = {}
 		local hooks, cleanupHooks
 		local hooksPointer = { value = 0 }
 		local lastProps: Props
@@ -238,7 +242,7 @@ function FuelCore.statefulElements<Props>(callback: (hooks: Hooks, props: Props)
 			lastProps = props
 			hooksPointer.value = 0
 			queuedRerender = false
-			apply(thingies, callback(hooks, props), getContext)
+			apply(things, callback(hooks, props), getContext)
 		end
 		hooks, cleanupHooks = makeHooks(hooksPointer, function()
 			if not queuedRerender then
@@ -249,7 +253,7 @@ function FuelCore.statefulElements<Props>(callback: (hooks: Hooks, props: Props)
 		onUpdate(rerender)
 		return function()
 			cleanupHooks()
-			apply(thingies, {}, getContext)
+			apply(things, {}, getContext)
 		end
 	end)
 end
