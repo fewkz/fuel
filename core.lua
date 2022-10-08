@@ -17,6 +17,9 @@ type Thing<Props> = { update: (new: Props, old: Props?) -> (), destroy: () -> ()
 -- See https://github.com/Roblox/luau/pull/86
 type Element = { constructor: Constructor<any>, props: any, children: { Element } }
 
+-- CreateElement is a function that takes props and children and returns an element.
+type CreateElement<Props> = (Props, children: { Element }?) -> Element
+
 -- A Thingy is a thing but it also stores the props and children that was used to create that thing.
 -- The  props and children used to create the thing is important so that we can check if any of the
 -- configuration changed to determine whether the thing should be updated.
@@ -140,9 +143,9 @@ function FuelCore.handle()
 	}
 end
 
-function FuelCore.thing<T>(constructor: Constructor<T>): (T, children: { Element }) -> Element
+function FuelCore.thing<Props>(constructor: Constructor<Props>): CreateElement<Props>
 	return function(props, children)
-		return { props = props, children = children, constructor = constructor }
+		return { props = props, children = if children then children else {}, constructor = constructor }
 	end
 end
 
