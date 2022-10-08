@@ -4,13 +4,13 @@ type Context<T> = { default: T }
 type GetContext = <T>(context: Context<T>) -> T
 type SetContext = <T>(context: Context<T>, value: T) -> ()
 type Cleanup = (() -> ())?
-type OnUpdate<Props> = ((Props) -> Cleanup) -> ()
+type OnUpdate<Props> = ((new: Props, old: Props?) -> Cleanup) -> ()
 
 -- Constructor is the function used to create a thing. This acts as the classes/types in fuel.
 type Constructor<Props> = (onUpdate: OnUpdate<Props>, getContext: GetContext, setContext: SetContext) -> Cleanup
 
 -- A thing represents an object that can be created, updated, and destroyed.
-type Thing<Props> = { update: OnUpdate<Props>, destroy: () -> () }
+type Thing<Props> = { update: (new: Props, old: Props?) -> (), destroy: () -> () }
 
 -- Element represents the desired state of a thing at any given point in time.
 -- We should replace `props: any` with `props: T` when Luau adds support for recursive types of different generics.
@@ -88,7 +88,7 @@ local function apply(thingies: { Thingy }, elements: { Element }, parentGetConte
 			thingy = existing
 		end
 		if existing and existing.constructor == element.constructor and existing.props ~= element.props then
-			existing.thing.update(element.props)
+			existing.thing.update(element.props, existing.props)
 			existing.props = element.props
 			getContext = existing.getContext
 		end
