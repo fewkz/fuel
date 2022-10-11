@@ -11,7 +11,7 @@ type Cleanup = (() -> ())?
 type OnUpdate<Props> = ((new: Props, old: Props?) -> Cleanup) -> ()
 
 -- Constructor is the function used to create a thing. This acts as the classes/types in fuel.
-type Constructor<Props> = (onUpdate: OnUpdate<Props>, getContext: GetContext, setContext: SetContext) -> Cleanup
+type Constructor<Props> = (onUpdate: OnUpdate<Props>, treeOperations: TreeOperations) -> Cleanup
 
 -- Element represents the desired state of a thing at any given point in time.
 -- See Note A
@@ -31,16 +31,39 @@ type ThingOperations<Props> = { update: (new: Props, old: Props?) -> (), destroy
 type Thing = {
 	constructor: Constructor<any>,
 	props: any,
-	children: { Thing },
 	operations: ThingOperations<any>,
-	getContext: GetContext,
+	treeContext: TreeContext,
 }
 
+-- TreeContext represents data about the thing's position in the tree and the context it's providing.
+type TreeContext = {
+	parent: Thing?,
+	children: { Thing },
+	providing: { [Context<any>]: any }, -- The type of the value should match the context's type
+	subscriptions: { [Context<any>]: (any) -> () }, -- The type of the parameter should match the context's type
+}
+
+-- TreeOperations are provided to a thing to let it interact with context.
+type TreeOperations = {
+	-- getContext seeks up the tree to find anything that's providing the desired context.
+	getContext: <T>(context: Context<T>) -> T,
+	-- subscribeContext gets the current context and also subscribes to any changes to that
+	-- context by marking itself as subscribed to the context.
+	subscribeContext: <T>(context: Context<T>, (T) -> ()) -> (() -> ()),
+	-- setContext propogates a value down the tree to any thing that is subscribed
+	-- to that context. It also marks itself as providing the context for getContext to use.
+	setContext: <T>(context: Context<T>, value: T) -> (),
+	-- unsetContext is a mixture of getContext and setContext, where it gets context
+	-- and then propogates that context down the tree via setContext. It also unmarks
+	-- itself as providing the context.
+	unsetContext: (context: Context<any>) -> (),
+}
+
+-- This constructs a thing and returns it's operations (update and destroy).
 local function constructThingOperations<T>(
 	constructor: Constructor<T>,
 	props: T,
-	getContext: GetContext,
-	setContext: SetContext
+	treeOperations: TreeOperations
 ): ThingOperations<T>
 	local update, cleanupLastUpdate = nil, nil
 	local onUpdate: OnUpdate<any> = function(callback)
@@ -53,7 +76,7 @@ local function constructThingOperations<T>(
 			cleanupLastUpdate = callback(props)
 		end
 	end
-	local cleanup = constructor(onUpdate, getContext, setContext)
+	local cleanup = constructor(onUpdate, treeOperations)
 	local destroy = function()
 		if cleanupLastUpdate then
 			cleanupLastUpdate()
@@ -65,21 +88,75 @@ local function constructThingOperations<T>(
 	return { update = update, destroy = destroy }
 end
 
+-- propogateContext will go through the tree and tell any descendant that cares about the context
+-- what the new value of the context is.
+local function propogateContext<T>(things: { Thing }, context: Context<T>, value: T)
+	for _, thing in things do
+		if thing.treeContext.subscriptions[context] then
+			thing.treeContext.subscriptions[context](value)
+		end
+		-- Don't propogate to context to descendants of a thing
+		-- that's providing the same context.
+		if thing.treeContext.providing[context] then
+			continue
+		end
+		propogateContext(thing.treeContext.children, context, value)
+	end
+end
+
+local function makeTreeOperations(treeContext: TreeContext): TreeOperations
+	local function getContext<T>(context: Context<T>): T
+		local ancestor = treeContext.parent
+		while ancestor do
+			-- FIXME: This won't work if the provided context value is nil!
+			if ancestor.treeContext.providing[context] then
+				return ancestor.treeContext.providing[context]
+			end
+			ancestor = ancestor.treeContext.parent
+		end
+		return context.default
+	end
+	local function subscribeContext<T>(context: Context<T>, callback: (T) -> ())
+		assert(not treeContext.subscriptions[context], "Can't subscribe to the same context twice.")
+		local current = getContext(context)
+		if current then
+			callback(current)
+		end
+		treeContext.subscriptions[context] = callback
+		return function()
+			treeContext.subscriptions[context] = nil
+		end
+	end
+	local function setContext<T>(context: Context<T>, value: T)
+		treeContext.providing[context] = value
+		propogateContext(treeContext.children, context, value)
+	end
+	local function unsetContext(context: Context<any>)
+		treeContext.providing[context] = nil
+		local value = getContext(context)
+		propogateContext(treeContext.children, context, value)
+	end
+	return {
+		getContext = getContext,
+		subscribeContext = subscribeContext,
+		setContext = setContext,
+		unsetContext = unsetContext,
+	}
+end
+
 type ContextStackEntry<T> = { context: Context<T>, value: T }
 type ContextStack = { ContextStackEntry<any> }
 
 -- Destroys the children of a thing and the thing itself recursively.
 local function destroyRecursive(thing: Thing)
-	for _, child in thing.children do
+	for _, child in thing.treeContext.children do
 		destroyRecursive(child) -- luau errors on this line for some reason
 	end
 	thing.operations.destroy()
 end
 
 -- Apply takes an array of things and an array of elements and mutates the things to match the array of elements.
-local function apply(things: { Thing }, elements: { Element }, parentGetContext: GetContext)
-	local getContext: GetContext
-	-- Remove things that no longer exist.
+local function apply(things: { Thing }, elements: { Element }, parent: Thing?)
 	for i, thing in things do
 		if not elements[i] then
 			destroyRecursive(thing)
@@ -94,46 +171,39 @@ local function apply(things: { Thing }, elements: { Element }, parentGetContext:
 		if existing then
 			thing = existing
 		end
+		-- Update an existing thing if it's props changed.
 		if existing and existing.constructor == element.constructor and existing.props ~= element.props then
 			existing.operations.update(element.props, existing.props)
 			existing.props = element.props
-			getContext = existing.getContext
-		end
-		if not existing or existing.constructor ~= element.constructor then
+		-- Create the thing if it doesn't exist or recreate the thing it's constructor changed.
+		elseif not existing or existing.constructor ~= element.constructor then
 			if existing then
 				existing.operations.destroy()
 			end
-			local localContext: any = {}
-			getContext = function(context)
-				if localContext[context] then
-					return localContext[context]
-				else
-					return parentGetContext(context)
-				end
-			end
-			local setContext: SetContext = function(context, value)
-				localContext[context] = value
-			end
-			local operations = constructThingOperations(element.constructor, element.props, getContext, setContext)
+			local treeContext = {
+				parent = parent,
+				children = if existing then existing.treeContext.children else {},
+				providing = {},
+				subscriptions = {},
+			}
+			local operations =
+				constructThingOperations(element.constructor, element.props, makeTreeOperations(treeContext))
 			if existing then
-				thing.operations = operations
+				existing.props = element.props
+				existing.operations = operations
+				existing.treeContext = treeContext
 			else
 				thing = {
 					constructor = element.constructor,
 					props = element.props,
-					children = {},
 					operations = operations,
-					getContext = getContext,
+					treeContext = treeContext,
 				}
 			end
 		end
-		apply(thing.children, element.children, getContext)
+		apply(thing.treeContext.children, element.children, thing)
 		things[i] = thing
 	end
-end
-
-local function defaultGetContext(context)
-	return context.default
 end
 
 local FuelCore = {}
@@ -142,14 +212,18 @@ function FuelCore.handle()
 	local things = {}
 	return {
 		apply = function(elements: { Element })
-			apply(things, elements, defaultGetContext)
+			apply(things, elements)
 		end,
 	}
 end
 
 function FuelCore.thing<Props>(constructor: Constructor<Props>): CreateElement<Props>
 	return function(props, children)
-		return { props = props, children = if children then children else {}, constructor = constructor }
+		return {
+			props = props,
+			children = if children then children else {},
+			constructor = constructor,
+		}
 	end
 end
 
@@ -168,7 +242,24 @@ local function dependenciesChanged(old: { any }, new: { any })
 	return false
 end
 
-local function makeHooks(pointerRef: { value: number }, queueRerender)
+FuelCore.Provider = FuelCore.thing(function<T>(onUpdate, treeOperations)
+	local lastContext, lastValue
+	onUpdate(function(props: { context: Context<T>, value: T })
+		if lastContext ~= props.context or lastValue ~= props.value then
+			lastContext, lastValue = props.context, props.value
+			treeOperations.setContext(props.context, props.value)
+		end
+		return
+	end)
+	return
+end)
+
+local function makeHooks(
+	pointerRef: { value: number },
+	treeOperations: TreeOperations,
+	queueRerender,
+	rerender
+)
 	local state: any = {}
 	local hooks = {}
 	function hooks.useState<T>(initial: T): (T, (T | (T) -> T) -> ())
@@ -222,6 +313,25 @@ local function makeHooks(pointerRef: { value: number }, queueRerender)
 		)
 		return state[pointer].value
 	end
+	function hooks.useContext<T>(context: Context<T>): T
+		local contextValue = hooks.useMemo(function()
+			return { value = context.default }
+		end)
+		hooks.useEffect(function()
+			return treeOperations.subscribeContext(context, function(value)
+				if value ~= contextValue.value then
+					contextValue.value = value
+					-- Context changing should always trigger a rerender.
+					-- For example, Roblox instance components being unmounted
+					-- will set parent context to nil before they're destroyed
+					-- so that children have a chance to unparent themselves so
+					-- they don't get destroyed as well.
+					rerender()
+				end
+			end)
+		end, { context })
+		return contextValue.value
+	end
 	return hooks, function()
 		for _, cleanup in cleanups do
 			cleanup()
@@ -229,10 +339,10 @@ local function makeHooks(pointerRef: { value: number }, queueRerender)
 	end
 end
 
-type Hooks = typeof(makeHooks({ value = 0 }, function() end))
+export type Hooks = typeof(makeHooks(unpack({} :: any)))
 
 function FuelCore.statefulElements<Props>(callback: (hooks: Hooks, props: Props) -> { Element })
-	return FuelCore.thing(function(onUpdate, getContext, setContext)
+	return FuelCore.thing(function(onUpdate, treeOperations)
 		local things = {}
 		local hooks, cleanupHooks
 		local hooksPointer = { value = 0 }
@@ -242,18 +352,20 @@ function FuelCore.statefulElements<Props>(callback: (hooks: Hooks, props: Props)
 			lastProps = props
 			hooksPointer.value = 0
 			queuedRerender = false
-			apply(things, callback(hooks, props), getContext)
+			apply(things, callback(hooks, props))
 		end
-		hooks, cleanupHooks = makeHooks(hooksPointer, function()
+		hooks, cleanupHooks = makeHooks(hooksPointer, treeOperations, function()
 			if not queuedRerender then
 				task.defer(rerender, lastProps)
 			end
 			queuedRerender = true
+		end, function()
+			rerender(lastProps)
 		end)
 		onUpdate(rerender)
 		return function()
 			cleanupHooks()
-			apply(things, {}, getContext)
+			apply(things, {})
 		end
 	end)
 end
