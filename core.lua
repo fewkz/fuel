@@ -348,6 +348,31 @@ end
 
 export type Hooks = typeof(makeHooks(unpack({} :: any)))
 
+function FuelCore.statefulComponent<Props>(callback: (hooks: Hooks, props: Props) -> ())
+	return FuelCore.thing(function(onUpdate, treeOperations)
+		local hooks, cleanupHooks
+		local hooksPointer = { value = 0 }
+		local lastProps: Props
+		local queuedRerender = false
+		local function rerender(props: Props)
+			lastProps = props
+			hooksPointer.value = 0
+			queuedRerender = false
+			callback(hooks, props)
+		end
+		hooks, cleanupHooks = makeHooks(hooksPointer, treeOperations, function()
+			if not queuedRerender then
+				task.defer(rerender, lastProps)
+			end
+			queuedRerender = true
+		end, function()
+			rerender(lastProps)
+		end)
+		onUpdate(rerender)
+		return cleanupHooks
+	end)
+end
+
 function FuelCore.statefulElements<Props>(callback: (hooks: Hooks, props: Props) -> { Element })
 	return FuelCore.thing(function(onUpdate, treeOperations)
 		local things = {}
