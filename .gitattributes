@@ -1,1 +1,5 @@
-rbx.lua linguist-generated
+# Linguist does not yet support Luau, so for syntax highlighting we will classify it as Lua.
+# This can be removed once https://github.com/github/linguist/issues/6000 is completed.
+*.luau linguist-language=Lua
+
+rbx.luau linguist-generated
