@@ -1,0 +1,7 @@
+{
+  "fmt": {
+    "options": {
+      "lineWidth": 100 // Little bit bigger than default of 80
+    }
+  }
+}
