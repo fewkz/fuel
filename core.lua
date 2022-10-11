@@ -319,19 +319,24 @@ local function makeHooks(
 		local contextValue = hooks.useMemo(function()
 			return { value = context.default }
 		end)
+		local isSync = true
 		hooks.useEffect(function()
 			return treeOperations.subscribeContext(context, function(value)
 				if value ~= contextValue.value then
 					contextValue.value = value
-					-- Context changing should always trigger a rerender.
-					-- For example, Roblox instance components being unmounted
-					-- will set parent context to nil before they're destroyed
-					-- so that children have a chance to unparent themselves so
-					-- they don't get destroyed as well.
-					rerender()
+					-- Only rerender if subscribe didn't emit synchronously.
+					if not isSync then
+						-- Context changing should always trigger a rerender.
+						-- For example, Roblox instance components being unmounted
+						-- will set parent context to nil before they're destroyed
+						-- so that children have a chance to unparent themselves so
+						-- they don't get destroyed as well.
+						rerender()
+					end
 				end
 			end)
 		end, { context })
+		isSync = false
 		return contextValue.value
 	end
 	return hooks, function()
