@@ -1,0 +1,9 @@
+# fuel builds
+Fuel.rbxm
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+# Luau LSP sourcemap
+sourcemap.json

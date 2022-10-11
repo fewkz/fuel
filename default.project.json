@@ -1,0 +1,12 @@
+{
+  "name": "Fuel",
+  "tree": {
+    "$path": "fuel.luau",
+    "Core": {
+      "$path": "core.luau"
+    },
+    "Rbx": {
+      "$path": "rbx.luau"
+    }
+  }
+}
