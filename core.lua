@@ -109,6 +109,7 @@ local function makeTreeOperations(treeContext: TreeContext): TreeOperations
 		local ancestor = treeContext.parent
 		while ancestor do
 			-- FIXME: This won't work if the provided context value is nil!
+			-- Fixing this will require the entries in providing to be like: { value: T }
 			if ancestor.treeContext.providing[context] then
 				return ancestor.treeContext.providing[context]
 			end
@@ -157,6 +158,7 @@ end
 
 -- Apply takes an array of things and an array of elements and mutates the things to match the array of elements.
 local function apply(things: { Thing }, elements: { Element }, parent: Thing?)
+	-- Remove things that no longer exist.
 	for i, thing in things do
 		if not elements[i] then
 			destroyRecursive(thing)
