@@ -8,7 +8,7 @@ type Context<T> = { default: T }
 type GetContext = <T>(context: Context<T>) -> T
 type SetContext = <T>(context: Context<T>, value: T) -> ()
 type Cleanup = (() -> ())?
-type OnUpdate<Props> = ((new: Props, old: Props?) -> Cleanup) -> ()
+type OnUpdate<Props> = ((Props) -> Cleanup) -> ()
 
 -- Constructor is the function used to create a thing. This acts as the classes/types in fuel.
 type Constructor<Props> = (onUpdate: OnUpdate<Props>, treeOperations: TreeOperations) -> Cleanup
@@ -175,7 +175,7 @@ local function apply(things: { Thing }, elements: { Element }, parent: Thing?)
 		end
 		-- Update an existing thing if it's props changed.
 		if existing and existing.constructor == element.constructor and existing.props ~= element.props then
-			existing.operations.update(element.props, existing.props)
+			existing.operations.update(element.props)
 			existing.props = element.props
 		-- Create the thing if it doesn't exist or recreate the thing it's constructor changed.
 		elseif not existing or existing.constructor ~= element.constructor then
