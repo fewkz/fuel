@@ -116,6 +116,9 @@ local Counter = Fuel.Core.statefulElement(function(hooks, props: {
     anchorPoint: Fuel.Align,
 })
     local count, setCount = hooks.useState(0)
+    local text = if count == 1
+        then "It's been "..count.." second"
+        else "It's been "..count.." seconds"
     -- The effect will run whenever count changes, and increment the count
     -- a second later, creating an infinite loop.
     hooks.useEffect(function()
@@ -127,7 +130,7 @@ local Counter = Fuel.Core.statefulElement(function(hooks, props: {
             task.cancel(thread)
         end
     end, { count })
-    -- In the current version of Fuel, context is not propogated to elements
+    -- In the current version of Fuel, context is not propagated to elements
     -- created by a component, so we must make the component consume the parent
     -- context and pass it explicitly. This should change in future versions!
     local parent = hooks.useContext(Fuel.Rbx.parentContext)
