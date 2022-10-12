@@ -1,0 +1,33 @@
+site_name: Fuel
+site_url: https://fewkz.github.io/fuel/
+repo_name: fewkz/fuel
+repo_url: https://github.com/fewkz/fuel
+theme:
+  name: material
+  features:
+    - navigation.instant
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Tutorial: tutorial.md
+  - Concepts: concepts.md
+  - Optimization: optimization.md
+  - Using Fuel for Roblox UI: roblox_ui.md
+  - Roblox Instance Reference: instance_reference.md
+
+markdown_extensions:
+  - pymdownx.superfences
