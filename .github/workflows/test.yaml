@@ -1,3 +1,4 @@
+name: Test Fuel core
 on: push
 jobs:
   test:
