@@ -193,6 +193,7 @@ local function apply(things: { Thing }, elements: { Element }, parent: Thing?)
 			local operations =
 				constructThingOperations(element.constructor, element.props, makeTreeOperations(treeContext))
 			if existing then
+				existing.constructor = element.constructor
 				existing.props = element.props
 				existing.operations = operations
 				existing.treeContext = treeContext
