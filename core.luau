@@ -20,7 +20,7 @@ export type Element = { constructor: Constructor<any>, props: any, children: { E
 -- CreateElement is a function that takes props and children and returns an element.
 type CreateElement<Props> = (Props, children: { Element }?) -> Element
 
-type ThingOperations<Props> = { update: (new: Props, old: Props?) -> (), destroy: () -> () }
+type ThingOperations<Props> = { update: (new: Props, old: Props?) -> ()?, destroy: () -> () }
 
 -- A thing represents an object that can be created, updated, and destroyed.
 -- Things store the props and children that were used to create the thing.
@@ -175,7 +175,9 @@ local function apply(things: { Thing }, elements: { Element }, parent: Thing?)
 		end
 		-- Update an existing thing if it's props changed.
 		if existing and existing.constructor == element.constructor and existing.props ~= element.props then
-			existing.operations.update(element.props)
+			if existing.operations.update then -- if onUpdate() is never called, update will be nil.
+				existing.operations.update(element.props)
+			end
 			existing.props = element.props
 		-- Create the thing if it doesn't exist or recreate the thing it's constructor changed.
 		elseif not existing or existing.constructor ~= element.constructor then
