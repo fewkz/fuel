@@ -1,5 +1,8 @@
 name: Test Fuel core
-on: push
+on:
+  push:
+    paths:
+      - core.luau
 jobs:
   test:
     runs-on: ubuntu-latest
