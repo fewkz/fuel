@@ -1,0 +1,9 @@
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: wget https://github.com/Roblox/luau/releases/download/0.550/luau-ubuntu.zip
+      - run: unzip luau-ubuntu.zip
+      - run: ./luau --fflags=LuauInterpolatedStringBaseSupport=true test.luau
