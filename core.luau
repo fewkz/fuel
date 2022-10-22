@@ -229,16 +229,26 @@ function FuelCore.thing<Props>(constructor: Constructor<Props>): CreateElement<P
 	end
 end
 
-FuelCore.Provider = FuelCore.thing(function<T>(onUpdate, treeOperations)
-	local lastContext, lastValue
-	onUpdate(function(props: { context: Context<T>, value: T })
-		if lastContext ~= props.context or lastValue ~= props.value then
-			lastContext, lastValue = props.context, props.value
-			treeOperations.setContext(props.context, props.value)
-		end
+local ProviderConstructor: Constructor<{ context: Context<any>, value: any }> =
+	function(onUpdate, treeOperations)
+		local lastContext, lastValue
+		onUpdate(function(props)
+			if lastContext ~= props.context or lastValue ~= props.value then
+				lastContext, lastValue = props.context, props.value
+				treeOperations.setContext(props.context, props.value)
+			end
+			return
+		end)
 		return
-	end)
-	return
-end)
+	end
+
+-- Provider has it's own function for creating elements as it has a generic parameter to make sure context and value are the same type.
+function FuelCore.Provider<T>(props: { context: Context<T>, value: T }, children: { Element }?): Element
+	return {
+		props = props,
+		children = if children then children else {},
+		constructor = ProviderConstructor,
+	}
+end
 
 return FuelCore
