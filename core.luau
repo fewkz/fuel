@@ -4,7 +4,7 @@
 -- This is blocked until Luau adds support for recursive types of different generics.
 -- See https://github.com/Roblox/luau/pull/86
 
-type Context<T> = { default: T }
+export type Context<T> = { default: T }
 type GetContext = <T>(context: Context<T>) -> T
 type SetContext = <T>(context: Context<T>, value: T) -> ()
 type Cleanup = (() -> ())?
@@ -15,7 +15,7 @@ type Constructor<Props> = (onUpdate: OnUpdate<Props>, treeOperations: TreeOperat
 
 -- Element represents the desired state of a thing at any given point in time.
 -- See Note A
-type Element = { constructor: Constructor<any>, props: any, children: { Element } }
+export type Element = { constructor: Constructor<any>, props: any, children: { Element } }
 
 -- CreateElement is a function that takes props and children and returns an element.
 type CreateElement<Props> = (Props, children: { Element }?) -> Element
@@ -44,7 +44,7 @@ type TreeContext = {
 }
 
 -- TreeOperations are provided to a thing to let it interact with context.
-type TreeOperations = {
+export type TreeOperations = {
 	-- getContext seeks up the tree to find anything that's providing the desired context.
 	getContext: <T>(context: Context<T>) -> T,
 	-- subscribeContext gets the current context and also subscribes to any changes to that
@@ -229,21 +229,6 @@ function FuelCore.thing<Props>(constructor: Constructor<Props>): CreateElement<P
 	end
 end
 
-local function dependenciesChanged(old: { any }, new: { any })
-	if old == new then
-		return false
-	end
-	if #old ~= #new then
-		return true
-	end
-	for i in old do
-		if new[i] == nil or new[i] ~= old[i] then
-			return true
-		end
-	end
-	return false
-end
-
 FuelCore.Provider = FuelCore.thing(function<T>(onUpdate, treeOperations)
 	local lastContext, lastValue
 	onUpdate(function(props: { context: Context<T>, value: T })
@@ -255,157 +240,5 @@ FuelCore.Provider = FuelCore.thing(function<T>(onUpdate, treeOperations)
 	end)
 	return
 end)
-
-local function makeHooks(
-	pointerRef: { value: number },
-	treeOperations: TreeOperations,
-	queueRerender,
-	rerender
-)
-	local state: any = {}
-	local hooks = {}
-	function hooks.useState<T>(initial: T): (T, (T | (T) -> T) -> ())
-		pointerRef.value += 1
-		local pointer = pointerRef.value
-		assert(
-			state[pointer] == nil or typeof(state[pointer]) == typeof(initial),
-			"useState failed because internal hook state was corrupted. Please consult the rules of hooks."
-		)
-		local currentState = if state[pointer] then state[pointer] else initial
-		return currentState,
-			function(change)
-				if typeof(change) == "function" then
-					state[pointer] = change(currentState)
-				else
-					state[pointer] = change
-				end
-				queueRerender()
-			end
-	end
-	local cleanups: { () -> () } = {}
-	function hooks.useEffect(callback: () -> (() -> ())?, dependencies: { any })
-		pointerRef.value += 1
-		local pointer = pointerRef.value
-		local lastDependencies = state[pointer]
-		assert(
-			lastDependencies == nil or typeof(lastDependencies) == "table",
-			"useEffect failed because internal hook state was corrupted. Please consult the rules of hooks."
-		)
-		if lastDependencies ~= nil and not dependenciesChanged(lastDependencies, dependencies) then
-			return
-		end
-		if cleanups[pointer] then
-			cleanups[pointer]()
-		end
-		local cleanup = callback()
-		if cleanup then
-			cleanups[pointer] = cleanup
-		end
-		state[pointer] = dependencies
-	end
-	function hooks.useMemo<T>(callback: () -> (T)): T
-		pointerRef.value += 1
-		local pointer = pointerRef.value
-		if not state[pointer] then
-			state[pointer] = { value = callback() }
-		end
-		assert(
-			typeof(state[pointer]) == "table",
-			"useMemo failed because internal hook state was corrupted. Please consult the rules of hooks."
-		)
-		return state[pointer].value
-	end
-	function hooks.useContext<T>(context: Context<T>): T
-		local contextValue = hooks.useMemo(function()
-			return { value = context.default }
-		end)
-		local isSync = true
-		hooks.useEffect(function()
-			return treeOperations.subscribeContext(context, function(value)
-				if value ~= contextValue.value then
-					contextValue.value = value
-					-- Only rerender if subscribe didn't emit synchronously.
-					if not isSync then
-						-- Context changing should always trigger a rerender.
-						-- For example, Roblox instance components being unmounted
-						-- will set parent context to nil before they're destroyed
-						-- so that children have a chance to unparent themselves so
-						-- they don't get destroyed as well.
-						rerender()
-					end
-				end
-			end)
-		end, { context })
-		isSync = false
-		return contextValue.value
-	end
-	return hooks, function()
-		for _, cleanup in cleanups do
-			cleanup()
-		end
-	end
-end
-
-export type Hooks = typeof(makeHooks(unpack({} :: any)))
-
-function FuelCore.statefulComponent<Props>(callback: (hooks: Hooks, props: Props) -> ())
-	return FuelCore.thing(function(onUpdate, treeOperations)
-		local hooks, cleanupHooks
-		local hooksPointer = { value = 0 }
-		local lastProps: Props
-		local queuedRerender = false
-		local function rerender(props: Props)
-			lastProps = props
-			hooksPointer.value = 0
-			queuedRerender = false
-			callback(hooks, props)
-		end
-		hooks, cleanupHooks = makeHooks(hooksPointer, treeOperations, function()
-			if not queuedRerender then
-				task.defer(rerender, lastProps)
-			end
-			queuedRerender = true
-		end, function()
-			rerender(lastProps)
-		end)
-		onUpdate(rerender)
-		return cleanupHooks
-	end)
-end
-
-function FuelCore.statefulElements<Props>(callback: (hooks: Hooks, props: Props) -> { Element })
-	return FuelCore.thing(function(onUpdate, treeOperations)
-		local things = {}
-		local hooks, cleanupHooks
-		local hooksPointer = { value = 0 }
-		local lastProps: Props
-		local queuedRerender = false
-		local function rerender(props: Props)
-			lastProps = props
-			hooksPointer.value = 0
-			queuedRerender = false
-			apply(things, callback(hooks, props))
-		end
-		hooks, cleanupHooks = makeHooks(hooksPointer, treeOperations, function()
-			if not queuedRerender then
-				task.defer(rerender, lastProps)
-			end
-			queuedRerender = true
-		end, function()
-			rerender(lastProps)
-		end)
-		onUpdate(rerender)
-		return function()
-			cleanupHooks()
-			apply(things, {})
-		end
-	end)
-end
-
-function FuelCore.statefulElement<Props>(callback: (hooks: Hooks, props: Props) -> Element)
-	return FuelCore.statefulElements(function(hooks, props: Props)
-		return { callback(hooks, props) }
-	end)
-end
 
 return FuelCore

@@ -1,6 +1,7 @@
 --!strict
 local parentContext = { default = nil :: Instance? }
 local FuelCore = require(script.Parent.Core)
+local FuelHooks = require(script.Parent.Hooks)
 local FuelRbx = {}
 FuelRbx.parentContext = parentContext
 
@@ -12,7 +13,7 @@ FuelRbx.RootInstance = FuelCore.thing(function(onUpdate, treeOperations)
 	return nil
 end)
 
-FuelRbx.InstanceCallback = FuelCore.statefulComponent(function(hooks, props: { callback: (Instance?) -> () })
+FuelRbx.InstanceCallback = FuelHooks.statefulComponent(function(hooks, props: { callback: (Instance?) -> () })
 	local parent = hooks.useContext(parentContext)
 	hooks.useEffect(function()
 		task.spawn(props.callback, parent)

@@ -5,6 +5,9 @@
     "Core": {
       "$path": "core.luau"
     },
+    "Hooks": {
+      "$path": "hooks.luau"
+    },
     "Rbx": {
       "$path": "rbx.luau"
     }
