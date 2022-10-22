@@ -1,5 +1,5 @@
 --!strict
--- Note A. For Element and Thing, we should give them a generic Props type,
+-- Note A. For Element and Resource, we should give them a generic Props type,
 -- and replace `props: any` with `props: Props`, and have their children be Element<any>.
 -- This is blocked until Luau adds support for recursive types of different generics.
 -- See https://github.com/Roblox/luau/pull/86
@@ -10,47 +10,44 @@ type SetContext = <T>(context: Context<T>, value: T) -> ()
 type Cleanup = (() -> ())?
 type OnUpdate<Props> = ((Props) -> Cleanup) -> ()
 
--- Constructor is the function used to create a thing. This acts as the classes/types in fuel.
-type Constructor<Props> = (onUpdate: OnUpdate<Props>, treeOperations: TreeOperations) -> Cleanup
+-- Behavior defines how a resource is supposed to behave. It determines what the resource does when
+-- it is created, updated, or destroys. It also allows the resource to access and manipulate context.
+type Behavior<Props> = (onUpdate: OnUpdate<Props>, treeOperations: TreeOperations) -> Cleanup
 
--- Element represents the desired state of a thing at any given point in time.
+-- Element represents the desired state of a resource at any given point in time.
 -- See Note A
-export type Element = { constructor: Constructor<any>, props: any, children: { Element } }
+export type Element = { behavior: Behavior<any>, props: any, children: { Element } }
 
--- CreateElement is a function that takes props and children and returns an element.
-type CreateElement<Props> = (Props, children: { Element }?) -> Element
+type ResourceOperations<Props> = { update: (new: Props, old: Props?) -> ()?, destroy: () -> () }
 
-type ThingOperations<Props> = { update: (new: Props, old: Props?) -> ()?, destroy: () -> () }
-
--- A thing represents an object that can be created, updated, and destroyed.
--- Things store the props and children that were used to create the thing.
--- The props and children used to create the thing is important so that we can check if any of the
--- configuration changed to determine whether the thing should be updated.
--- I need a better name for this, or I could just store the props and children in Thing itself.
+-- Resources represents an object that can be created, updated, and destroyed.
+-- Resources store the props and children that were used to create the resource.
+-- The props and children used to create the resource are important so that we can check
+-- if any of the configuration changed to determine whether the resource should be updated.
 -- See Note A
-type Thing = {
-	constructor: Constructor<any>,
+type Resource = {
+	behavior: Behavior<any>,
 	props: any,
-	operations: ThingOperations<any>,
+	operations: ResourceOperations<any>,
 	treeContext: TreeContext,
 }
 
--- TreeContext represents data about the thing's position in the tree and the context it's providing.
+-- TreeContext represents data about the resource's position in the tree and the context it's providing.
 type TreeContext = {
-	parent: Thing?,
-	children: { Thing },
+	parent: Resource?,
+	children: { Resource },
 	providing: { [Context<any>]: any }, -- The type of the value should match the context's type
 	subscriptions: { [Context<any>]: (any) -> () }, -- The type of the parameter should match the context's type
 }
 
--- TreeOperations are provided to a thing to let it interact with context.
+-- TreeOperations are provided to a resource to let it interact with context.
 export type TreeOperations = {
-	-- getContext seeks up the tree to find anything that's providing the desired context.
+	-- getContext seeks up the tree to find any resource that's providing the desired context.
 	getContext: <T>(context: Context<T>) -> T,
 	-- subscribeContext gets the current context and also subscribes to any changes to that
 	-- context by marking itself as subscribed to the context.
 	subscribeContext: <T>(context: Context<T>, (T) -> ()) -> (() -> ()),
-	-- setContext propogates a value down the tree to any thing that is subscribed
+	-- setContext propogates a value down the tree to any resource that is subscribed
 	-- to that context. It also marks itself as providing the context for getContext to use.
 	setContext: <T>(context: Context<T>, value: T) -> (),
 	-- unsetContext is a mixture of getContext and setContext, where it gets context
@@ -59,12 +56,12 @@ export type TreeOperations = {
 	unsetContext: (context: Context<any>) -> (),
 }
 
--- This constructs a thing and returns it's operations (update and destroy).
-local function constructThingOperations<T>(
-	constructor: Constructor<T>,
+-- This uses behavior to generate resource operations that can be used to update and destroy the resource.
+local function constructResourceOperations<T>(
+	behavior: Behavior<T>,
 	props: T,
 	treeOperations: TreeOperations
-): ThingOperations<T>
+): ResourceOperations<T>
 	local update, cleanupLastUpdate = nil, nil
 	local onUpdate: OnUpdate<any> = function(callback)
 		assert(update == nil, "onUpdate can only be called once!")
@@ -76,7 +73,7 @@ local function constructThingOperations<T>(
 			cleanupLastUpdate = callback(props)
 		end
 	end
-	local cleanup = constructor(onUpdate, treeOperations)
+	local cleanup = behavior(onUpdate, treeOperations)
 	local destroy = function()
 		if cleanupLastUpdate then
 			cleanupLastUpdate()
@@ -90,17 +87,17 @@ end
 
 -- propogateContext will go through the tree and tell any descendant that cares about the context
 -- what the new value of the context is.
-local function propogateContext<T>(things: { Thing }, context: Context<T>, value: T)
-	for _, thing in things do
-		if thing.treeContext.subscriptions[context] then
-			thing.treeContext.subscriptions[context](value)
+local function propogateContext<T>(resources: { Resource }, context: Context<T>, value: T)
+	for _, resource in resources do
+		if resource.treeContext.subscriptions[context] then
+			resource.treeContext.subscriptions[context](value)
 		end
-		-- Don't propogate to context to descendants of a thing
+		-- Don't propogate to context to descendants of a resource
 		-- that's providing the same context.
-		if thing.treeContext.providing[context] then
+		if resource.treeContext.providing[context] then
 			continue
 		end
-		propogateContext(thing.treeContext.children, context, value)
+		propogateContext(resource.treeContext.children, context, value)
 	end
 end
 
@@ -148,41 +145,41 @@ end
 type ContextStackEntry<T> = { context: Context<T>, value: T }
 type ContextStack = { ContextStackEntry<any> }
 
--- Destroys the children of a thing and the thing itself recursively.
-local function destroyRecursive(thing: Thing)
-	for _, child in thing.treeContext.children do
-		destroyRecursive(child) -- luau errors on this line for some reason
+-- Destroys a resource and it's descendants recursively.
+local function destroyRecursive(resource: Resource)
+	for _, child in resource.treeContext.children do
+		destroyRecursive(child)
 	end
-	thing.operations.destroy()
+	resource.operations.destroy()
 end
 
--- Apply takes an array of things and an array of elements and mutates the things to match the array of elements.
-local function apply(things: { Thing }, elements: { Element }, parent: Thing?)
-	-- Remove things that no longer exist.
-	for i, thing in things do
+-- Apply takes an array of resources and an array of elements and mutates the resources to match the array of elements.
+local function apply(resources: { Resource }, elements: { Element }, parent: Resource?)
+	-- Remove resources that no longer exist.
+	for i, resource in resources do
 		if not elements[i] then
-			destroyRecursive(thing)
-			things[i] = nil
+			destroyRecursive(resource)
+			resources[i] = nil
 		end
 	end
 
-	-- Creates new things or updates existing things.
+	-- Creates new resources or updates existing resources.
 	for i, element in elements do
-		local existing: Thing? = things[i]
-		local thing: Thing
+		local existing: Resource? = resources[i]
+		local resource: Resource
 		if existing then
-			thing = existing
+			resource = existing
 		end
-		-- Update an existing thing if it's props changed.
-		if existing and existing.constructor == element.constructor and existing.props ~= element.props then
+		-- Update an existing resource if it's props changed.
+		if existing and existing.behavior == element.behavior and existing.props ~= element.props then
 			if existing.operations.update then -- if onUpdate() is never called, update will be nil.
 				existing.operations.update(element.props)
 			end
 			existing.props = element.props
-		-- Create the thing if it doesn't exist or recreate the thing it's constructor changed.
-		elseif not existing or existing.constructor ~= element.constructor then
+		-- Create the resource if it doesn't exist or recreate the resource it's behavior changed.
+		elseif not existing or existing.behavior ~= element.behavior then
 			if existing then
-				-- Unset all of the contexts that the existing thing was providing.
+				-- Unset all of the contexts that the existing resource was providing.
 				local operations = makeTreeOperations(existing.treeContext)
 				for context in existing.treeContext.providing do
 					operations.unsetContext(context)
@@ -197,66 +194,66 @@ local function apply(things: { Thing }, elements: { Element }, parent: Thing?)
 				subscriptions = {},
 			}
 			local operations =
-				constructThingOperations(element.constructor, element.props, makeTreeOperations(treeContext))
+				constructResourceOperations(element.behavior, element.props, makeTreeOperations(treeContext))
 			if existing then
-				existing.constructor = element.constructor
+				existing.behavior = element.behavior
 				existing.props = element.props
 				existing.operations = operations
 				existing.treeContext = treeContext
 			else
-				thing = {
-					constructor = element.constructor,
+				resource = {
+					behavior = element.behavior,
 					props = element.props,
 					operations = operations,
 					treeContext = treeContext,
 				}
 			end
 		end
-		apply(thing.treeContext.children, element.children, thing)
-		things[i] = thing
+		apply(resource.treeContext.children, element.children, resource)
+		resources[i] = resource
 	end
 end
 
 local FuelCore = {}
 
 function FuelCore.handle()
-	local things = {}
+	local resources = {}
 	return {
 		apply = function(elements: { Element })
-			apply(things, elements)
+			apply(resources, elements)
 		end,
 	}
 end
 
-function FuelCore.thing<Props>(constructor: Constructor<Props>): CreateElement<Props>
-	return function(props, children)
+--- Creates a function that can be used to create an element with the given behavior.
+function FuelCore.define<Props>(behavior: Behavior<Props>)
+	return function(props: Props, children: { Element }?): Element
 		return {
 			props = props,
 			children = if children then children else {},
-			constructor = constructor,
+			behavior = behavior,
 		}
 	end
 end
 
-local ProviderConstructor: Constructor<{ context: Context<any>, value: any }> =
-	function(onUpdate, treeOperations)
-		local lastContext, lastValue
-		onUpdate(function(props)
-			if lastContext ~= props.context or lastValue ~= props.value then
-				lastContext, lastValue = props.context, props.value
-				treeOperations.setContext(props.context, props.value)
-			end
-			return
-		end)
+local ProviderBehavior: Behavior<{ context: Context<any>, value: any }> = function(onUpdate, treeOperations)
+	local lastContext, lastValue
+	onUpdate(function(props)
+		if lastContext ~= props.context or lastValue ~= props.value then
+			lastContext, lastValue = props.context, props.value
+			treeOperations.setContext(props.context, props.value)
+		end
 		return
-	end
+	end)
+	return
+end
 
--- Provider has it's own function for creating elements as it has a generic parameter to make sure context and value are the same type.
+--- Creates a context provider element. Providers provide the given context with the given value to all of it's descendants.
 function FuelCore.Provider<T>(props: { context: Context<T>, value: T }, children: { Element }?): Element
 	return {
 		props = props,
 		children = if children then children else {},
-		constructor = ProviderConstructor,
+		behavior = ProviderBehavior,
 	}
 end
 

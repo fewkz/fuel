@@ -13,12 +13,12 @@ local function test(name: string, body: () -> ())
 	end
 end
 
-local blankComponent = core.thing(function()
+local blankComponent = core.define(function()
 	return
 end)
 
 local function makeTestComponent(lifeRef: { string })
-	return core.thing(function(onUpdate, operations)
+	return core.define(function(onUpdate, operations)
 		table.insert(lifeRef, "create")
 		onUpdate(function(props: { value: string })
 			table.insert(lifeRef, "updated with " .. props.value)
@@ -31,7 +31,7 @@ local function makeTestComponent(lifeRef: { string })
 end
 
 local function makeContextReader(context, valueHistoryRef)
-	return core.thing(function(_, operations)
+	return core.define(function(_, operations)
 		operations.subscribeContext(context, function(value)
 			table.insert(valueHistoryRef, value)
 		end)

@@ -5,7 +5,7 @@ local FuelHooks = require(script.Parent.Hooks)
 local FuelRbx = {}
 FuelRbx.parentContext = parentContext
 
-FuelRbx.RootInstance = FuelCore.thing(function(onUpdate, treeOperations)
+FuelRbx.RootInstance = FuelCore.define(function(onUpdate, treeOperations)
 	onUpdate(function(props: { instance: Instance })
 		treeOperations.setContext(parentContext, props.instance)
 		return nil
@@ -37,7 +37,7 @@ type FrameProps = {
 	size: UDim2?,
 	color: Color3?,
 }
-FuelRbx.Frame = FuelCore.thing(function(onUpdate, treeOperations)
+FuelRbx.Frame = FuelCore.define(function(onUpdate, treeOperations)
 	local instance = Instance.new("Frame")
 	onUpdate(function(props: FrameProps)
 		if props.name then
@@ -69,7 +69,7 @@ type TextLabelProps = {
 	position: UDim2 | Align | nil,
 	anchorPoint: Vector2 | Align | nil,
 }
-FuelRbx.TextLabel = FuelCore.thing(function(onUpdate, treeOperations)
+FuelRbx.TextLabel = FuelCore.define(function(onUpdate, treeOperations)
 	local instance = Instance.new("TextLabel")
 	onUpdate(function(props: TextLabelProps)
 		if props.name then
@@ -168,7 +168,7 @@ type TextButtonProps = {
 	anchorPoint: Vector2 | Align | nil,
 	onActivated: () -> ()?,
 }
-FuelRbx.TextButton = FuelCore.thing(function(onUpdate, treeOperations)
+FuelRbx.TextButton = FuelCore.define(function(onUpdate, treeOperations)
 	local instance = Instance.new("TextButton")
 	local lastProps: TextButtonProps?
 	local lastActivatedConn
@@ -275,7 +275,7 @@ type UIListLayoutProps = {
 	direction: "Horizontal" | "Vertical",
 	align: Align?,
 }
-FuelRbx.UIListLayout = FuelCore.thing(function(onUpdate, treeOperations)
+FuelRbx.UIListLayout = FuelCore.define(function(onUpdate, treeOperations)
 	local instance = Instance.new("UIListLayout")
 	onUpdate(function(props: UIListLayoutProps)
 		instance.FillDirection = if props.direction == "Horizontal"
@@ -313,7 +313,7 @@ type UIPaddingProps = {
 	right: UDim?,
 	bottom: UDim?,
 }
-FuelRbx.UIPadding = FuelCore.thing(function(onUpdate, treeOperations)
+FuelRbx.UIPadding = FuelCore.define(function(onUpdate, treeOperations)
 	local instance = Instance.new("UIPadding")
 	onUpdate(function(props: UIPaddingProps)
 		if props.top then
@@ -343,7 +343,7 @@ end)
 type UICornerProps = {
 	radius: UDim?,
 }
-FuelRbx.UICorner = FuelCore.thing(function(onUpdate, treeOperations)
+FuelRbx.UICorner = FuelCore.define(function(onUpdate, treeOperations)
 	local instance = Instance.new("UICorner")
 	onUpdate(function(props: UICornerProps)
 		if props.radius then
