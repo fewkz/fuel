@@ -182,6 +182,12 @@ local function apply(things: { Thing }, elements: { Element }, parent: Thing?)
 		-- Create the thing if it doesn't exist or recreate the thing it's constructor changed.
 		elseif not existing or existing.constructor ~= element.constructor then
 			if existing then
+				-- Unset all of the contexts that the existing thing was providing.
+				local operations = makeTreeOperations(existing.treeContext)
+				for context in existing.treeContext.providing do
+					operations.unsetContext(context)
+				end
+				-- Destroy the resource via it's defined destroy method.
 				existing.operations.destroy()
 			end
 			local treeContext = {
